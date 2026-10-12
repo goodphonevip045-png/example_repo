@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>หน้าหลัก - จองโต๊ะอาหาร</title>
+</head>
+<body>
+    <h2>ระบบจองโต๊ะอาหาร</h2>
+    <div>
+        User ID: {{ .UserID }} | Role: <strong>{{ .UserRole }}</strong> |
+        <form action="/logout" method="POST" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+            <button type="submit">ออกจากระบบ</button>
+        </form>
+    </div>
+    <hr>
+
+    <!-- ฟอร์มที่ 1: จองโต๊ะอาหาร -->
+    <h3>1. ฟอร์มจองโต๊ะอาหาร</h3>
+    <p>รับจองเวลา {{ .OpenTime }} - {{ .LastTime }} น. (ระบบจัดโต๊ะให้อัตโนมัติ ดูสถานะโต๊ะได้ด้านล่าง)</p>
+    <form action="/booking/create" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <label>ชื่อผู้จอง:</label> <input type="text" name="contact_name" maxlength="100" required>
+        <label>เบอร์โทร:</label> <input type="tel" name="contact_phone" maxlength="20" placeholder="0812345678" required>
+        <br><br>
+        <label>วันที่:</label> <input type="date" name="booking_date" min="{{ .Today }}" value="{{ .CheckDate }}" required>
+        <label>เวลา:</label> <input type="time" name="booking_time" min="{{ .OpenTime }}" max="{{ .LastTime }}" required>
+        <label>จำนวนคน:</label> <input type="number" name="party_size" min="1" max="50" value="1" required>
+        <br><br>
+        <label>หมายเหตุเพิ่มเติม:</label><br>
+        <textarea name="special_request" rows="2" cols="40" maxlength="500"></textarea>
+        <br><br>
+        <button type="submit">ยืนยันการจอง</button>
+    </form>
+
+    <hr>
+
+    <!-- สถานะโต๊ะ -->
+    <h3 id="tables">สถานะโต๊ะ</h3>
+    <form action="/" method="GET">
+        <label>วันที่:</label> <input type="date" name="date" value="{{ .CheckDate }}" min="{{ .Today }}" required>
+        <label>เวลา:</label> <input type="time" name="time" value="{{ .CheckTime }}" required>
+        <button type="submit">ดูสถานะโต๊ะ</button>
+    </form>
+    <p>
+        ณ วันที่ <strong>{{ .CheckDate }}</strong> เวลา <strong>{{ .CheckTime }}</strong> น. :
+        ทั้งหมด <strong>{{ .TotalCount }}</strong> โต๊ะ |
+        ว่าง <strong>{{ .FreeCount }}</strong> โต๊ะ |
+        เต็ม <strong>{{ sub .TotalCount .FreeCount }}</strong> โต๊ะ
+    </p>
+    <table border="1" cellpadding="5">
+        <tr>
+            <th>โต๊ะที่</th>
+            <th>ที่นั่ง</th>
+            <th>สถานะ</th>
+        </tr>
+        {{ range .Tables }}
+        <tr>
+            <td>{{ .No }}</td>
+            <td>{{ .Seats }}</td>
+            <td>
+                {{ if .Occupied }}<strong>เต็ม</strong> (ว่างอีกครั้งหลัง {{ .Until }} น.){{ else }}ว่าง{{ end }}
+            </td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="3">ยังไม่มีโต๊ะในระบบ</td></tr>
+        {{ end }}
+    </table>
+    <p><small>หมายเหตุ: ถือว่าแต่ละโต๊ะนั่งได้ประมาณ 2 ชั่วโมงต่อการจอง 1 ครั้ง</small></p>
+
+    <hr>
+
+    <!-- แสดงรายการจองของตนเอง (CRUD มีเจ้าของ) -->
+    <h3>รายการจองของฉัน</h3>
+    <table border="1" cellpadding="5">
+        <tr>
+            <th>ID</th>
+            <th>วันที่</th>
+            <th>เวลา</th>
+            <th>โต๊ะที่</th>
+            <th>จำนวนคน</th>
+            <th>ผู้ติดต่อ</th>
+            <th>หมายเหตุ</th>
+            <th>สถานะ</th>
+            <th>การจัดการ</th>
+        </tr>
+        {{ range .Bookings }}
+        <tr>
+            <td>{{ .ID }}</td>
+            <td>{{ .BookingDate }}</td>
+            <td>{{ .BookingTime }}</td>
+            <td>{{ if .TableNo }}{{ .TableNo }}{{ else }}-{{ end }}</td>
+            <td>{{ .PartySize }}</td>
+            <td>{{ .ContactName }}<br>{{ .ContactPhone }}</td>
+            <td>{{ .SpecialRequest }}</td>
+            <td>{{ .Status }}</td>
+            <td>
+                {{ if .CanCancel }}
+                <form action="/booking/cancel" method="POST" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                    <input type="hidden" name="booking_id" value="{{ .ID }}">
+                    <button type="submit">ยกเลิกการจอง</button>
+                </form>
+                {{ else }}
+                -
+                {{ end }}
+            </td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="9">ยังไม่มีรายการจอง</td></tr>
+        {{ end }}
+    </table>
+
+    <hr>
+
+    <!-- ฟอร์มที่ 2: ฟอร์มรีวิว -->
+    <h3>2. ฟอร์มส่งรีวิว/ข้อเสนอแนะ</h3>
+    <form action="/review/create" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <label>คะแนน (1-5 ดาว):</label>
+        <select name="rating">
+            <option value="5">5 ดาว</option>
+            <option value="4">4 ดาว</option>
+            <option value="3">3 ดาว</option>
+            <option value="2">2 ดาว</option>
+            <option value="1">1 ดาว</option>
+        </select>
+        <br><br>
+        <label>ความคิดเห็น:</label><br>
+        <textarea name="comment" rows="2" cols="40" required></textarea>
+        <br><br>
+        <button type="submit">ส่งรีวิว</button>
+    </form>
+
+    <h4>รีวิวจากผู้ใช้งานทั้งหมด</h4>
+    <ul>
+        {{ range .Reviews }}
+        <li><strong>{{ .Rating }} ดาว:</strong> {{ .Comment }} <em>({{ .CreatedAt }})</em></li>
+        {{ else }}
+        <li>ยังไม่มีรีวิว</li>
+        {{ end }}
+    </ul>
+</body>
+</html>

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Dashboard</title>
+</head>
+<body>
+    <h2>หน้าผู้ดูแลระบบ (Admin Dashboard)</h2>
+    <form action="/logout" method="POST" style="display:inline;">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <button type="submit">ออกจากระบบ</button>
+    </form>
+    <hr>
+
+    <h3 id="tables">สถานะโต๊ะ</h3>
+    <form action="/admin" method="GET">
+        <label>วันที่:</label> <input type="date" name="date" value="{{ .CheckDate }}" required>
+        <label>เวลา:</label> <input type="time" name="time" value="{{ .CheckTime }}" required>
+        <button type="submit">ดูสถานะโต๊ะ</button>
+    </form>
+    <p>
+        ณ วันที่ <strong>{{ .CheckDate }}</strong> เวลา <strong>{{ .CheckTime }}</strong> น. :
+        ทั้งหมด <strong>{{ .TotalCount }}</strong> โต๊ะ |
+        ว่าง <strong>{{ .FreeCount }}</strong> โต๊ะ |
+        เต็ม <strong>{{ sub .TotalCount .FreeCount }}</strong> โต๊ะ
+    </p>
+    <table border="1" cellpadding="5">
+        <tr>
+            <th>โต๊ะที่</th>
+            <th>ที่นั่ง</th>
+            <th>สถานะ</th>
+            <th>ผู้จอง</th>
+            <th>เปิด/ปิดใช้งาน</th>
+        </tr>
+        {{ range .Tables }}
+        <tr>
+            <td>{{ .No }}</td>
+            <td>{{ .Seats }}</td>
+            <td>
+                {{ if not .Active }}ปิดใช้งาน
+                {{ else if .Occupied }}<strong>เต็ม</strong> ({{ .From }}-{{ .Until }})
+                {{ else }}ว่าง{{ end }}
+            </td>
+            <td>
+                {{ if .Occupied }}การจอง #{{ .BookingID }}: {{ .Guest }} ({{ .Size }} คน) {{ .Phone }}{{ else }}-{{ end }}
+            </td>
+            <td>
+                <form action="/admin/table/toggle" method="POST" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                    <input type="hidden" name="table_id" value="{{ .ID }}">
+                    {{ if .Active }}
+                    <input type="hidden" name="active" value="0">
+                    <button type="submit">ปิดใช้งาน</button>
+                    {{ else }}
+                    <input type="hidden" name="active" value="1">
+                    <button type="submit">เปิดใช้งาน</button>
+                    {{ end }}
+                </form>
+            </td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="5">ยังไม่มีโต๊ะในระบบ</td></tr>
+        {{ end }}
+    </table>
+
+    <h4>เพิ่มโต๊ะ / แก้จำนวนที่นั่ง</h4>
+    <form action="/admin/table/save" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <label>โต๊ะที่:</label> <input type="number" name="table_no" min="1" max="999" required>
+        <label>จำนวนที่นั่ง:</label> <input type="number" name="seats" min="1" max="50" required>
+        <button type="submit">บันทึก</button>
+        <small>(ถ้าหมายเลขโต๊ะมีอยู่แล้ว จะเป็นการแก้จำนวนที่นั่ง)</small>
+    </form>
+
+    <hr>
+
+    <h3>จัดการรายการจองทั้งหมดในระบบ</h3>
+    <table border="1" cellpadding="5">
+        <tr>
+            <th>Booking ID</th>
+            <th>User ID</th>
+            <th>ผู้ติดต่อ</th>
+            <th>วันที่</th>
+            <th>เวลา</th>
+            <th>โต๊ะที่</th>
+            <th>จำนวนคน</th>
+            <th>หมายเหตุ</th>
+            <th>สถานะปัจจุบัน</th>
+            <th>เปลี่ยนสถานะ</th>
+        </tr>
+        {{ range .Bookings }}
+        <tr>
+            <td>{{ .ID }}</td>
+            <td>{{ .UserID }}</td>
+            <td>{{ .ContactName }}<br>{{ .ContactPhone }}</td>
+            <td>{{ .BookingDate }}</td>
+            <td>{{ .BookingTime }}</td>
+            <td>{{ if .TableNo }}{{ .TableNo }}{{ else }}-{{ end }}</td>
+            <td>{{ .PartySize }}</td>
+            <td>{{ .SpecialRequest }}</td>
+            <td><strong>{{ .Status }}</strong></td>
+            <td>
+                <form action="/admin/booking/update" method="POST" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="{{ $.CSRFToken }}">
+                    <input type="hidden" name="booking_id" value="{{ .ID }}">
+                    <select name="status">
+                        <option value="confirmed" {{ if eq .Status "confirmed" }}selected{{ end }}>Confirmed</option>
+                        <option value="pending" {{ if eq .Status "pending" }}selected{{ end }}>Pending</option>
+                        <option value="cancelled" {{ if eq .Status "cancelled" }}selected{{ end }}>Cancelled</option>
+                    </select>
+                    <button type="submit">อัปเดต</button>
+                </form>
+            </td>
+        </tr>
+        {{ else }}
+        <tr><td colspan="10">ยังไม่มีรายการจอง</td></tr>
+        {{ end }}
+    </table>
+</body>
+</html>

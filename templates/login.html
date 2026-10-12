@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>เข้าสู่ระบบ</title>
+</head>
+<body>
+    <h2>เข้าสู่ระบบ</h2>
+    <form action="/login" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ .CSRFToken }}">
+        <div>
+            <label>Email:</label>
+            <input type="email" name="email" required>
+        </div>
+        <br>
+        <div>
+            <label>Password:</label>
+            <input type="password" name="password" required>
+        </div>
+        <br>
+        <button type="submit">เข้าสู่ระบบ</button>
+    </form>
+    <p>ยังไม่มีบัญชี? <a href="/register">สมัครสมาชิก</a></p>
+</body>
+</html>
