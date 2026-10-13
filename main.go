@@ -386,6 +386,18 @@ func requireAdmin(w http.ResponseWriter, r *http.Request) (session, bool) {
 	return s, true
 }
 
+func requireCustomer(w http.ResponseWriter, r *http.Request) (session, bool) {
+	s, ok := requireUser(w, r)
+	if !ok {
+		return session{}, false
+	}
+	if s.Role != "customer" {
+		http.Error(w, "Forbidden: สำหรับ Customer เท่านั้น", http.StatusForbidden)
+		return session{}, false
+	}
+	return s, true
+}
+
 func serverError(w http.ResponseWriter, context string, err error) {
 	log.Printf("ERROR %s: %v", context, err)
 	http.Error(w, "เกิดข้อผิดพลาดภายในระบบ กรุณาลองใหม่อีกครั้ง", http.StatusInternalServerError)
@@ -551,7 +563,8 @@ func main() {
 	mux.HandleFunc("/logout", handleLogout)
 
 	// Customer
-	mux.HandleFunc("/", handleHome)
+	mux.HandleFunc("/", handleIndex)
+	mux.HandleFunc("/customer", handleHome)
 	mux.HandleFunc("/booking/create", handleCreateBooking)
 	mux.HandleFunc("/booking/cancel", handleCancelBooking)
 	mux.HandleFunc("/review/create", handleCreateReview)
@@ -702,8 +715,11 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 
 		if role == "admin" {
 			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		} else if role == "customer" {
+			http.Redirect(w, r, "/customer", http.StatusSeeOther)
 		} else {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			destroySession(w, r)
+			http.Error(w, "บัญชีนี้ไม่มีสิทธิ์เข้าใช้งาน", http.StatusForbidden)
 		}
 	default:
 		w.Header().Set("Allow", "GET, POST")
@@ -724,12 +740,43 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 // Customer handlers
 // --------------------------------------------------------------------
 
-func handleHome(w http.ResponseWriter, r *http.Request) {
+func handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	s, ok := requireUser(w, r)
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	s, ok := getSession(r)
+	if !ok {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	switch s.Role {
+	case "admin":
+		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	case "customer":
+		http.Redirect(w, r, "/customer", http.StatusSeeOther)
+	default:
+		http.Error(w, "Forbidden", http.StatusForbidden)
+	}
+}
+
+func handleHome(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/customer" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s, ok := requireCustomer(w, r)
 	if !ok {
 		return
 	}
@@ -797,7 +844,7 @@ func handleCreateBooking(w http.ResponseWriter, r *http.Request) {
 	if !postOnly(w, r) {
 		return
 	}
-	s, ok := requireUser(w, r)
+	s, ok := requireCustomer(w, r)
 	if !ok {
 		return
 	}
@@ -869,7 +916,7 @@ func handleCreateBooking(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/customer", http.StatusSeeOther)
 }
 
 // ยกเลิกการจอง (เช็คเจ้าของด้วย user_id จาก session)
@@ -878,7 +925,7 @@ func handleCancelBooking(w http.ResponseWriter, r *http.Request) {
 	if !postOnly(w, r) {
 		return
 	}
-	s, ok := requireUser(w, r)
+	s, ok := requireCustomer(w, r)
 	if !ok {
 		return
 	}
@@ -906,7 +953,7 @@ func handleCancelBooking(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ไม่พบรายการจองนี้ หรือถูกยกเลิกไปแล้ว หรือเลยเวลาจองแล้ว", http.StatusNotFound)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/customer", http.StatusSeeOther)
 }
 
 // ฟอร์มที่ 2: ส่งรีวิว
@@ -914,7 +961,7 @@ func handleCreateReview(w http.ResponseWriter, r *http.Request) {
 	if !postOnly(w, r) {
 		return
 	}
-	s, ok := requireUser(w, r)
+	s, ok := requireCustomer(w, r)
 	if !ok {
 		return
 	}
@@ -935,7 +982,7 @@ func handleCreateReview(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "create review", err)
 		return
 	}
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/customer", http.StatusSeeOther)
 }
 
 // --------------------------------------------------------------------
