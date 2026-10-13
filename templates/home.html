@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>หน้าลูกค้า - จองโต๊ะอาหาร</title>
+    <title>หน้าหลัก - จองโต๊ะอาหาร</title>
 </head>
 <body>
     <h2>ระบบจองโต๊ะอาหาร</h2>
@@ -37,7 +37,7 @@
 
     <!-- สถานะโต๊ะ -->
     <h3 id="tables">สถานะโต๊ะ</h3>
-    <form action="/customer" method="GET">
+    <form action="/" method="GET">
         <label>วันที่:</label> <input type="date" name="date" value="{{ .CheckDate }}" min="{{ .Today }}" required>
         <label>เวลา:</label> <input type="time" name="time" value="{{ .CheckTime }}" required>
         <button type="submit">ดูสถานะโต๊ะ</button>
