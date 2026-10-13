@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: restaurant-booking
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: DB_DSN
+        sync: false

@@ -68,6 +68,32 @@ func withDateLock(ctx context.Context, date string, fn func(conn *sql.Conn) erro
 	return fn(conn)
 }
 
+// withInventoryLock serializes table allocation with admin table changes.
+// Callers that also need a date lock must acquire the date lock first.
+func withInventoryLock(ctx context.Context, fn func(conn *sql.Conn) error) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	const lockName = "table-inventory"
+	var got sql.NullInt64
+	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 5)", lockName).Scan(&got); err != nil {
+		return err
+	}
+	if !got.Valid || got.Int64 != 1 {
+		return errBookingBusy
+	}
+	defer func() {
+		var released sql.NullInt64
+		if err := conn.QueryRowContext(context.Background(), "SELECT RELEASE_LOCK(?)", lockName).Scan(&released); err != nil {
+			fmt.Printf("ERROR release lock %s: %v\n", lockName, err)
+		}
+	}()
+	return fn(conn)
+}
+
 // timesOverlap: ช่วงนั่ง [aStart, aStart+diningMin) ทับกับ [bStart, bStart+diningMin) หรือไม่
 func timesOverlap(aStart, bStart int) bool {
 	return aStart < bStart+diningMin && bStart < aStart+diningMin
@@ -162,17 +188,19 @@ func pickTable(ctx context.Context, q queryer, date string, startMin, size, excl
 func createBooking(ctx context.Context, userID int, date, tm string, startMin, size int, name, phone, request string) (int, error) {
 	var tableNo int
 	err := withDateLock(ctx, date, func(conn *sql.Conn) error {
-		tid, no, err := pickTable(ctx, conn, date, startMin, size, 0, 0)
-		if err != nil {
+		return withInventoryLock(ctx, func(inventoryConn *sql.Conn) error {
+			tid, no, err := pickTable(ctx, inventoryConn, date, startMin, size, 0, 0)
+			if err != nil {
+				return err
+			}
+			_, err = inventoryConn.ExecContext(ctx,
+				"INSERT INTO bookings(user_id, booking_date, booking_time, party_size, table_id, contact_name, contact_phone, special_request) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+				userID, date, tm, size, tid, name, phone, request)
+			if err == nil {
+				tableNo = no
+			}
 			return err
-		}
-		_, err = conn.ExecContext(ctx,
-			"INSERT INTO bookings(user_id, booking_date, booking_time, party_size, table_id, contact_name, contact_phone, special_request) VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
-			userID, date, tm, size, tid, name, phone, request)
-		if err == nil {
-			tableNo = no
-		}
-		return err
+		})
 	})
 	return tableNo, err
 }
@@ -204,17 +232,19 @@ func adminSetStatus(ctx context.Context, id int, status string) error {
 		return fmt.Errorf("เวลาของการจอง %d ไม่ถูกต้อง: %q", id, tm)
 	}
 	return withDateLock(ctx, date, func(conn *sql.Conn) error {
-		prefer := 0
-		if tableID.Valid {
-			prefer = int(tableID.Int64)
-		}
-		tid, _, err := pickTable(ctx, conn, date, startMin, size, id, prefer)
-		if err != nil {
+		return withInventoryLock(ctx, func(inventoryConn *sql.Conn) error {
+			prefer := 0
+			if tableID.Valid {
+				prefer = int(tableID.Int64)
+			}
+			tid, _, err := pickTable(ctx, inventoryConn, date, startMin, size, id, prefer)
+			if err != nil {
+				return err
+			}
+			_, err = inventoryConn.ExecContext(ctx,
+				"UPDATE bookings SET status = ?, table_id = ? WHERE id = ? AND status = 'cancelled'", status, tid, id)
 			return err
-		}
-		_, err = conn.ExecContext(ctx,
-			"UPDATE bookings SET status = ?, table_id = ? WHERE id = ? AND status = 'cancelled'", status, tid, id)
-		return err
+		})
 	})
 }
 
@@ -335,10 +365,10 @@ func tableBoard(ctx context.Context, date string, atMin int, admin bool) (tables
 // --------------------------------------------------------------------
 
 // futureBookingsOnTable: จำนวนการจองในอนาคต (ที่ยังไม่ยกเลิก) ของโต๊ะ ที่มีจำนวนคนมากกว่า minParty
-func futureBookingsOnTable(ctx context.Context, where string, arg interface{}, minParty int) (int, error) {
+func futureBookingsOnTable(ctx context.Context, q queryer, where string, arg interface{}, minParty int) (int, error) {
 	nowStr := time.Now().In(thaiTZ).Format("2006-01-02 15:04:05")
 	var n int
-	err := db.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		"SELECT COUNT(*) FROM bookings b JOIN dining_tables t ON t.id = b.table_id WHERE "+where+
 			" AND b.status <> 'cancelled' AND TIMESTAMP(b.booking_date, b.booking_time) > ? AND b.party_size > ?",
 		arg, nowStr, minParty).Scan(&n)
@@ -364,19 +394,23 @@ func handleAdminTableSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	n, err := futureBookingsOnTable(r.Context(), "t.table_no = ?", no, seats)
+	var conflictCount int
+	err = withInventoryLock(r.Context(), func(conn *sql.Conn) error {
+		var err error
+		conflictCount, err = futureBookingsOnTable(r.Context(), conn, "t.table_no = ?", no, seats)
+		if err != nil || conflictCount > 0 {
+			return err
+		}
+		_, err = conn.ExecContext(r.Context(),
+			"INSERT INTO dining_tables(table_no, seats) VALUES(?, ?) ON DUPLICATE KEY UPDATE seats = VALUES(seats)", no, seats)
+		return err
+	})
 	if err != nil {
-		serverError(w, "table seats check", err)
-		return
-	}
-	if n > 0 {
-		http.Error(w, fmt.Sprintf("โต๊ะที่ %d มีการจองในอนาคตที่ใช้มากกว่า %d ที่นั่ง (%d รายการ) กรุณาย้ายหรือยกเลิกก่อนลดจำนวนที่นั่ง", no, seats, n), http.StatusConflict)
-		return
-	}
-
-	if _, err := db.ExecContext(r.Context(),
-		"INSERT INTO dining_tables(table_no, seats) VALUES(?, ?) ON DUPLICATE KEY UPDATE seats = VALUES(seats)", no, seats); err != nil {
 		serverError(w, "table save", err)
+		return
+	}
+	if conflictCount > 0 {
+		http.Error(w, fmt.Sprintf("โต๊ะที่ %d มีการจองในอนาคตที่ใช้มากกว่า %d ที่นั่ง (%d รายการ) กรุณาย้ายหรือยกเลิกก่อนลดจำนวนที่นั่ง", no, seats, conflictCount), http.StatusConflict)
 		return
 	}
 	http.Redirect(w, r, "/admin#tables", http.StatusSeeOther)
@@ -397,24 +431,28 @@ func handleAdminTableToggle(w http.ResponseWriter, r *http.Request) {
 	}
 	active := r.FormValue("active") == "1"
 
-	if !active {
-		n, err := futureBookingsOnTable(r.Context(), "t.id = ?", id, 0)
-		if err != nil {
-			serverError(w, "table toggle check", err)
-			return
-		}
-		if n > 0 {
-			http.Error(w, fmt.Sprintf("โต๊ะนี้ยังมีการจองในอนาคต %d รายการ กรุณาย้ายหรือยกเลิกก่อนปิดใช้งาน", n), http.StatusConflict)
-			return
-		}
-	}
-
 	v := 0
 	if active {
 		v = 1
 	}
-	if _, err := db.ExecContext(r.Context(), "UPDATE dining_tables SET is_active = ? WHERE id = ?", v, id); err != nil {
+	var conflictCount int
+	err = withInventoryLock(r.Context(), func(conn *sql.Conn) error {
+		var err error
+		if !active {
+			conflictCount, err = futureBookingsOnTable(r.Context(), conn, "t.id = ?", id, 0)
+			if err != nil || conflictCount > 0 {
+				return err
+			}
+		}
+		_, err = conn.ExecContext(r.Context(), "UPDATE dining_tables SET is_active = ? WHERE id = ?", v, id)
+		return err
+	})
+	if err != nil {
 		serverError(w, "table toggle", err)
+		return
+	}
+	if conflictCount > 0 {
+		http.Error(w, fmt.Sprintf("โต๊ะนี้ยังมีการจองในอนาคต %d รายการ กรุณาย้ายหรือยกเลิกก่อนปิดใช้งาน", conflictCount), http.StatusConflict)
 		return
 	}
 	http.Redirect(w, r, "/admin#tables", http.StatusSeeOther)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
@@ -493,11 +494,12 @@ func main() {
 
 	dsn := os.Getenv("DB_DSN")
 	if dsn == "" {
-		dsn = "root:@tcp(127.0.0.1:3306)/restaurant_db"
-		log.Println("คำเตือน: ใช้ DB user 'root' ไม่มีรหัสผ่าน (เหมาะกับเครื่องทดสอบเท่านั้น) ตั้งค่า DB_DSN เพื่อใช้ user เฉพาะแอป")
+		log.Fatal("DB_DSN is required; set it to the MySQL connection string for the application database user")
 	}
 	addr := os.Getenv("ADDR")
-	if addr == "" {
+	if port := os.Getenv("PORT"); port != "" {
+		addr = ":" + port
+	} else if addr == "" {
 		addr = ":8080"
 	}
 
@@ -544,6 +546,16 @@ func main() {
 	go cleanupSessions()
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.PingContext(ctx); err != nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprintln(w, "ok")
+	})
 
 	// Auth
 	mux.HandleFunc("/register", handleRegister)
